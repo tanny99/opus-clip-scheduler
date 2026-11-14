@@ -43,8 +43,8 @@ export function generateScheduleSlots(
   // Start at least 10 minutes from now
   cursor.setMinutes(cursor.getMinutes() + 10);
 
-  // We'll search forward up to 60 days worth of hourly slots
-  const maxIterations = 60 * 24;
+  // We'll search forward up to 365 days worth of hourly slots
+  const maxIterations = 365 * 24;
   let iterations = 0;
 
   while (slots.length < count && iterations < maxIterations) {

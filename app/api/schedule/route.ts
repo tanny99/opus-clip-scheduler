@@ -66,21 +66,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: "All clips are already scheduled or posted", scheduled: [] });
     }
 
-    // 3. Generate enough time slots
+    // 3. Generate enough time slots (up to 365 days out)
     const slots = generateScheduleSlots(toSchedule.length, new Date(), 4);
-    if (slots.length < toSchedule.length) {
-      return NextResponse.json(
-        { error: `Could only find ${slots.length} slots for ${toSchedule.length} clips. Try reducing selection.` },
-        { status: 400 }
-      );
-    }
+    const schedulable = toSchedule.slice(0, slots.length);
 
     // 4. Schedule each clip
     const results: { clipId: string; account: string; publishAt: string; scheduleId: string }[] = [];
     const errors: { clipId: string; account: string; error: string }[] = [];
 
-    for (let i = 0; i < toSchedule.length; i++) {
-      const item = toSchedule[i];
+    for (let i = 0; i < schedulable.length; i++) {
+      const item = schedulable[i];
       const slot = slots[i];
       try {
         const result = await scheduleClip({
@@ -104,7 +99,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ scheduled: results, errors, total: toSchedule.length });
+    return NextResponse.json({
+      scheduled: results,
+      errors,
+      total: toSchedule.length,
+      skipped: toSchedule.length - schedulable.length,
+    });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
