@@ -266,6 +266,14 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+      {/* Build timestamp */}
+      <div className="fixed bottom-3 right-4 text-xs text-gray-600">
+        Last updated:{" "}
+        {new Date(process.env.NEXT_PUBLIC_BUILD_TIME!).toLocaleString("en-US", {
+          month: "short", day: "numeric", year: "numeric",
+          hour: "2-digit", minute: "2-digit", timeZoneName: "short",
+        })}
+      </div>
     </div>
   );
 }
