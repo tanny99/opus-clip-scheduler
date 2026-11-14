@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Generate enough time slots (up to 365 days out)
-    const slots = generateScheduleSlots(toSchedule.length, new Date(), 4);
+    const slots = generateScheduleSlots(toSchedule.length, new Date());
     const schedulable = toSchedule.slice(0, slots.length);
 
     // 4. Schedule each clip
