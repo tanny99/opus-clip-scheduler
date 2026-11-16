@@ -289,7 +289,7 @@ export default function Dashboard() {
       const chunk = items.slice(i, i + CHUNK_SIZE);
       // Retry on network errors (TypeError: Failed to fetch) up to 3 times
       let attempt = 0;
-      let data: { scheduled: number; failed: number; errors: string[]; rateLimitHits?: number } | null = null;
+      let data: { scheduled: number; failed: number; errors: string[]; rateLimitHits?: number; results?: ItemResult[] } | null = null;
       while (attempt <= 3) {
         try {
           const res = await fetch("/api/schedule", {
