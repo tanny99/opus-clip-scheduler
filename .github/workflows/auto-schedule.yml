@@ -13,7 +13,6 @@ jobs:
       - name: Trigger schedule endpoint
         run: |
           response=$(curl -s -w "\n%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "https://opusclipping.vercel.app/api/cron/schedule")
           body=$(echo "$response" | head -n -1)
           status=$(echo "$response" | tail -n 1)
