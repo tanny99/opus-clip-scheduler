@@ -5,8 +5,8 @@ import { generateScheduleSlots } from "@/lib/scheduler";
 
 export const maxDuration = 300;
 
-const BATCH_SIZE = 3;
-const BATCH_DELAY_MS = 1200;
+const BATCH_SIZE = 1;         // one clip at a time — no parallel pressure on the API
+const BATCH_DELAY_MS = 2500;  // 2.5s between each clip = ~24 clips/min
 
 export interface ScheduleItem {
   projectId: string;

@@ -36,6 +36,7 @@ export interface PostTask {
   clipId: string;
   scheduleId: string | null;
   platform: string;
+  postAccountId?: string;
   status: "posted" | "scheduled" | "failed" | "pending";
   publishAt: string;
   postDetail: {
@@ -51,6 +52,29 @@ export interface SocialAccount {
   name: string;
   profileUrl: string;
   subAccountId?: string;
+}
+
+export async function listSocialAccounts(): Promise<SocialAccount[]> {
+  try {
+    const res = await fetch(`${BASE_URL}/post-accounts`, {
+      headers: headers(),
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const list: Record<string, unknown>[] = data.list || data.data || data.accounts || [];
+    return list
+      .map((a) => ({
+        postAccountId: (a.postAccountId || a.post_account_id) as string,
+        platform: a.platform as string,
+        name: a.name as string,
+        profileUrl: (a.profileUrl || a.profile_url || "") as string,
+        subAccountId: (a.subAccountId || a.sub_account_id) as string | undefined,
+      }))
+      .filter((a) => a.postAccountId);
+  } catch {
+    return [];
+  }
 }
 
 export async function listProjects(page = 0, pageSize = 100): Promise<{ projects: Project[]; total: number }> {
@@ -101,7 +125,7 @@ export async function scheduleClip(params: {
   title: string;
   description?: string;
   privacy?: string;
-}): Promise<{ scheduleId: string; postId: string; publishAt: string }> {
+}, retries = 5): Promise<{ scheduleId: string; postId: string; publishAt: string }> {
   const body: Record<string, unknown> = {
     projectId: params.projectId,
     clipId: params.clipId,
@@ -123,7 +147,19 @@ export async function scheduleClip(params: {
     body: JSON.stringify(body),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.errorMessage || "Schedule failed");
+  if (!res.ok) {
+    if (res.status === 429 && retries > 0) {
+      // Exponential backoff: each retry waits progressively longer
+      const base = typeof data.retryAfter === "number" ? data.retryAfter : 1500;
+      const attempt = 6 - retries; // 1st retry = attempt 1, 2nd = 2, ...
+      const waitMs = base * attempt + 500;
+      await new Promise((r) => setTimeout(r, waitMs));
+      return scheduleClip(params, retries - 1);
+    }
+    const raw = data.errorMessage ?? data.message ?? data.error ?? data;
+    const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
+    throw new Error(`[${res.status}] ${detail}`);
+  }
   return data.data;
 }
 
