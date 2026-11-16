@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Project, Clip, PostTask, SocialAccount } from "@/lib/opusclip";
-import { type ScheduleItem } from "@/app/api/schedule/route";
+import { type ScheduleItem, type ItemResult } from "@/app/api/schedule/route";
 import Link from "next/link";
 import { PLATFORM_ICONS } from "@/lib/accounts";
 
@@ -123,6 +123,9 @@ export default function Dashboard() {
   const [showErrors, setShowErrors] = useState(false);
   const [cacheAgeMs, setCacheAgeMs] = useState<number | null>(null);
   const [rateLimitHits, setRateLimitHits] = useState(0);
+  type LogEntry = ItemResult & { accountName: string; ts: number };
+  const [liveLog, setLiveLog] = useState<LogEntry[]>([]);
+  const logRef = useRef<HTMLDivElement>(null);
   const [refreshing, setRefreshing] = useState(false);
   type ApiStatus = {
     fetchOk: boolean | null;
@@ -250,7 +253,7 @@ export default function Dashboard() {
     );
   };
 
-  const CHUNK_SIZE = 30;
+  const CHUNK_SIZE = 5; // small chunks = live log updates every ~12s
 
   // Execute a list of items in chunks. Respects pauseRef / haltRef between chunks.
   const executeItems = async (
@@ -316,6 +319,15 @@ export default function Dashboard() {
       failed += data.failed;
       if (data.rateLimitHits) setRateLimitHits((prev) => prev + data!.rateLimitHits!);
       lastErrors = data.errors?.length ? data.errors : lastErrors;
+      // Append per-item results to live log (newest at top)
+      if (data.results?.length) {
+        const entries: LogEntry[] = data.results.map((r: ItemResult) => ({
+          ...r,
+          accountName: accounts.find((a) => a.postAccountId === r.postAccountId)?.name ?? r.postAccountId,
+          ts: Date.now(),
+        }));
+        setLiveLog((prev) => [...entries.reverse(), ...prev]);
+      }
       setScheduleStatus("");
       setProgress({ total, scheduled, failed, done: false, errors: lastErrors });
     }
@@ -361,6 +373,7 @@ export default function Dashboard() {
     setIsPaused(false);
     setPendingItems([]);
     setRateLimitHits(0);
+    setLiveLog([]);
     pauseRef.current = false;
     haltRef.current = false;
 
@@ -715,6 +728,41 @@ export default function Dashboard() {
                         ))}
                       </div>
                     )}
+                  </div>
+                )}
+                {/* Live per-clip log */}
+                {liveLog.length > 0 && (
+                  <div className="mt-3">
+                    <p className="text-xs text-gray-500 mb-1.5">
+                      Live log — {liveLog.filter(e => e.status === "ok").length} ok · {liveLog.filter(e => e.status === "failed").length} failed
+                    </p>
+                    <div ref={logRef} className="max-h-56 overflow-y-auto space-y-0.5 font-mono">
+                      {liveLog.map((entry, i) => (
+                        <div
+                          key={i}
+                          className={`flex items-start gap-2 text-xs px-2 py-1 rounded ${
+                            entry.status === "ok"
+                              ? "bg-green-900/15 text-green-300"
+                              : "bg-red-900/20 text-red-300"
+                          }`}
+                        >
+                          <span className="flex-shrink-0 mt-px">
+                            {entry.status === "ok" ? "✓" : "✗"}
+                          </span>
+                          <span className="text-gray-400 flex-shrink-0 truncate max-w-[100px]" title={entry.accountName}>
+                            [{entry.accountName}]
+                          </span>
+                          <span className="truncate flex-1 min-w-0" title={entry.title}>
+                            {entry.title}
+                          </span>
+                          {entry.error && (
+                            <span className="flex-shrink-0 text-red-400/70 truncate max-w-[180px]" title={entry.error}>
+                              {entry.error}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </>

@@ -105,16 +105,24 @@ async function handlePrepare(body: {
   return NextResponse.json({ items });
 }
 
+export type ItemResult = {
+  title: string;
+  postAccountId: string;
+  status: "ok" | "failed";
+  error?: string;
+};
+
 // ── EXECUTE ───────────────────────────────────────────────────────────────────
 // Receives a chunk of pre-prepared items and schedules them.
-// No data fetching — fast per call.
+// No data fetching — fast per call. Returns per-item results for live log.
 async function handleExecute(body: { items: ScheduleItem[] }) {
   const items = body.items || [];
-  if (items.length === 0) return NextResponse.json({ scheduled: 0, failed: 0, errors: [] });
+  if (items.length === 0) return NextResponse.json({ scheduled: 0, failed: 0, errors: [], results: [], rateLimitHits: 0 });
 
   let scheduled = 0;
   let failed = 0;
   const errors: string[] = [];
+  const itemResults: ItemResult[] = [];
 
   for (let i = 0; i < items.length; i += BATCH_SIZE) {
     const batch = items.slice(i, i + BATCH_SIZE);
@@ -136,12 +144,16 @@ async function handleExecute(body: { items: ScheduleItem[] }) {
 
     for (let j = 0; j < results.length; j++) {
       const r = results[j];
+      const item = batch[j];
       if (r.status === "fulfilled") {
         scheduled++;
+        itemResults.push({ title: item.title, postAccountId: item.postAccountId, status: "ok" });
       } else {
         failed++;
-        const msg = `${batch[j].title.slice(0, 40)} → ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`;
-        if (errors.length < 20) errors.push(msg);
+        const errMsg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        const logMsg = `${item.title.slice(0, 40)} → ${errMsg}`;
+        if (errors.length < 20) errors.push(logMsg);
+        itemResults.push({ title: item.title, postAccountId: item.postAccountId, status: "failed", error: errMsg });
       }
     }
 
@@ -151,7 +163,7 @@ async function handleExecute(body: { items: ScheduleItem[] }) {
   }
 
   const rateLimitHits = errors.filter((e) => e.includes("[429]")).length;
-  return NextResponse.json({ scheduled, failed, errors, rateLimitHits });
+  return NextResponse.json({ scheduled, failed, errors, rateLimitHits, results: itemResults });
 }
 
 // ── ROUTER ────────────────────────────────────────────────────────────────────
