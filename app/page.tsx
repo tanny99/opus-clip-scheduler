@@ -253,7 +253,7 @@ export default function Dashboard() {
     );
   };
 
-  const CHUNK_SIZE = 5; // small chunks = live log updates every ~12s
+  const CHUNK_SIZE = 20; // server now fires 10 schedules in parallel per chunk → a chunk clears in ~2s
 
   // Execute a list of items in chunks. Respects pauseRef / haltRef between chunks.
   const executeItems = async (
