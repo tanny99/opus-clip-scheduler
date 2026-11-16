@@ -60,6 +60,29 @@ function clearScheduleCache() {
   try { localStorage.removeItem(CACHE_KEY); } catch {}
 }
 
+// ── Persistent data cache — NEVER deleted on errors ───────────────────────────
+const LS_STATS = "opusclip_stats";
+const LS_PROJECTS = "opusclip_projects";
+const LS_ACCOUNTS = "opusclip_accounts";
+
+function lsSave(key: string, data: unknown) {
+  try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), data })); } catch {}
+}
+
+function lsLoad<T>(key: string): { data: T; ageMs: number } | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const { t, data } = JSON.parse(raw);
+    return { data: data as T, ageMs: Date.now() - t };
+  } catch { return null; }
+}
+
+function minsAgo(ts: number) {
+  const m = Math.round((Date.now() - ts) / 60000);
+  return m < 1 ? "just now" : `${m}m ago`;
+}
+
 function statusBadge(status: string) {
   const colors: Record<string, string> = {
     posted: "bg-green-500/20 text-green-400 border border-green-500/30",
@@ -100,43 +123,87 @@ export default function Dashboard() {
   const [showErrors, setShowErrors] = useState(false);
   const [cacheAgeMs, setCacheAgeMs] = useState<number | null>(null);
   const [rateLimitHits, setRateLimitHits] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  type ApiStatus = {
+    fetchOk: boolean | null;
+    scheduleOk: boolean | null;
+    fetchAt: number | null;
+    fetchErr: string | null;
+    usingCachedData: boolean;
+  };
+  const [apiStatus, setApiStatus] = useState<ApiStatus>({
+    fetchOk: null, scheduleOk: null, fetchAt: null, fetchErr: null, usingCachedData: false,
+  });
 
   const fetchStats = useCallback(async () => {
     setStatsLoading(true);
+    // Show cached data immediately so UI never shows all-zeros
+    const cached = lsLoad<Stats>(LS_STATS);
+    if (cached) {
+      setStats(cached.data);
+      setApiStatus((p) => ({ ...p, usingCachedData: true }));
+    }
     try {
       const res = await fetch("/api/stats");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setStats(data);
-    } catch {
-      // non-critical
+      lsSave(LS_STATS, data);
+      setApiStatus((p) => ({ ...p, fetchOk: true, fetchAt: Date.now(), fetchErr: null, usingCachedData: false }));
+    } catch (err) {
+      // Keep showing cached data, just record the error
+      setApiStatus((p) => ({ ...p, fetchOk: false, fetchErr: String(err), usingCachedData: !!cached }));
     } finally {
       setStatsLoading(false);
     }
   }, []);
 
   const fetchAccounts = useCallback(async () => {
+    // Load from cache first
+    const cached = lsLoad<SocialAccount[]>(LS_ACCOUNTS);
+    if (cached) {
+      setAccounts(cached.data);
+      setSelectedAccounts(cached.data.map((a) => a.postAccountId));
+    }
     try {
       const res = await fetch("/api/accounts");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const accs: SocialAccount[] = data.accounts || [];
       setAccounts(accs);
       setSelectedAccounts(accs.map((a) => a.postAccountId));
-    } catch {}
+      lsSave(LS_ACCOUNTS, accs);
+    } catch {
+      // Keep cached accounts
+    }
   }, []);
 
   const fetchProjects = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    // Show cached projects immediately — never leave list empty on error
+    const cached = lsLoad<ProjectWithClips[]>(LS_PROJECTS);
+    if (cached) setProjects(cached.data);
     try {
       const res = await fetch("/api/projects");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setProjects(data.projects || []);
-    } catch {
-      setError("Failed to load projects");
+      const projs = data.projects || [];
+      setProjects(projs);
+      lsSave(LS_PROJECTS, projs);
+    } catch (err) {
+      // Keep cached data, show warning only if no cache
+      if (!cached) setError("Failed to load projects — no cached data available");
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const refreshAll = useCallback(async () => {
+    setRefreshing(true);
+    setError(null);
+    await Promise.all([fetchProjects(), fetchAccounts(), fetchStats()]);
+    setRefreshing(false);
+  }, [fetchProjects, fetchAccounts, fetchStats]);
 
   useEffect(() => {
     fetchProjects();
@@ -254,6 +321,7 @@ export default function Dashboard() {
     }
 
     // All items processed — cache is now stale, clear it
+    setApiStatus((p) => ({ ...p, scheduleOk: true }));
     clearScheduleCache();
     setCacheAgeMs(null);
     setProgress((prev) => prev ? { ...prev, done: true } : null);
@@ -337,6 +405,7 @@ export default function Dashboard() {
       setProgress({ total: items.length, scheduled: 0, failed: 0, done: false, errors: [] });
       await executeItems(items, 0, 0, items.length, []);
     } catch (err) {
+      setApiStatus((p) => ({ ...p, scheduleOk: false }));
       setError(String(err));
       setScheduling(false);
       setScheduleStatus("");
@@ -349,10 +418,67 @@ export default function Dashboard() {
     <div className="min-h-screen bg-gray-950 text-gray-100">
       {/* Header */}
       <div className="border-b border-gray-800 bg-gray-900/50 backdrop-blur sticky top-0 z-10">
+        {/* API Status bar */}
+        <div className="border-b border-gray-800/60 bg-gray-900/80">
+          <div className="max-w-6xl mx-auto px-4 py-1.5 flex items-center gap-4 flex-wrap text-xs">
+            <span className="text-gray-500 font-medium">API Status</span>
+            {/* Fetch API */}
+            <span className={`flex items-center gap-1 ${
+              apiStatus.fetchOk === null ? "text-gray-500"
+              : apiStatus.fetchOk ? "text-green-400"
+              : "text-red-400"
+            }`}>
+              <span className="w-1.5 h-1.5 rounded-full bg-current" />
+              {apiStatus.fetchOk === null ? "Fetch: —"
+               : apiStatus.fetchOk ? `Fetch: OK${apiStatus.fetchAt ? ` · ${minsAgo(apiStatus.fetchAt)}` : ""}`
+               : `Fetch: Error`}
+            </span>
+            {/* Schedule API */}
+            <span className={`flex items-center gap-1 ${
+              apiStatus.scheduleOk === null ? "text-gray-500"
+              : apiStatus.scheduleOk ? "text-green-400"
+              : "text-red-400"
+            }`}>
+              <span className="w-1.5 h-1.5 rounded-full bg-current" />
+              {apiStatus.scheduleOk === null ? "Schedule: —"
+               : apiStatus.scheduleOk ? "Schedule: OK"
+               : "Schedule: Error"}
+            </span>
+            {/* Rate limits */}
+            {rateLimitHits > 0 && (
+              <span className="text-orange-400 flex items-center gap-1">
+                <span>⚠</span> Rate limited {rateLimitHits}× (auto-retried)
+              </span>
+            )}
+            {/* Cached data warning */}
+            {apiStatus.usingCachedData && apiStatus.fetchOk === false && (
+              <span className="text-yellow-500">⚠ Showing cached data — live fetch failed</span>
+            )}
+            {apiStatus.fetchErr && apiStatus.fetchOk === false && (
+              <span className="text-red-400/70 truncate max-w-xs" title={apiStatus.fetchErr}>
+                ({apiStatus.fetchErr.slice(0, 60)})
+              </span>
+            )}
+          </div>
+        </div>
+
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-bold text-white">OpusClip Scheduler</h1>
-            <p className="text-sm text-gray-400">{projects.length} projects · Auto-schedules at peak engagement times</p>
+          <div className="flex items-center gap-3">
+            {/* Refresh button — only refreshes data, never touches schedule cache */}
+            <button
+              onClick={refreshAll}
+              disabled={refreshing || loading}
+              title="Refresh projects, stats & accounts from OpusClip"
+              className="p-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 rounded-lg transition-colors cursor-pointer text-gray-400 hover:text-white border border-gray-700 flex-shrink-0"
+            >
+              <svg className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+            <div>
+              <h1 className="text-xl font-bold text-white">OpusClip Scheduler</h1>
+              <p className="text-sm text-gray-400">{projects.length} projects · Auto-schedules at peak engagement times</p>
+            </div>
           </div>
           <div className="flex gap-2">
             <Link
