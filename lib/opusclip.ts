@@ -151,10 +151,9 @@ export async function scheduleClip(params: {
     if (res.status === 429 && retries > 0) {
       const base = typeof data.retryAfter === "number" ? data.retryAfter : 1200;
       const attempt = 6 - retries; // 1st retry = 1, 2nd = 2, ...
-      // Jitter (0–600ms random) prevents thundering herd. Cap at 5s so
-      // rate-limit retries don't eat the cron function's time budget.
+      // Jitter (0–600ms random) prevents thundering herd.
       const jitter = Math.floor(Math.random() * 600);
-      const waitMs = Math.min(base * attempt + 300 + jitter, 5000);
+      const waitMs = base * attempt + 300 + jitter;
       await new Promise((r) => setTimeout(r, waitMs));
       return scheduleClip(params, retries - 1);
     }

@@ -5,12 +5,14 @@ import { generateScheduleSlots } from "@/lib/scheduler";
 
 export const maxDuration = 300;
 
-// Hard stop at 220s — always respond before Vercel's 300s kill.
-// Workers check this after each clip so the endpoint never returns 504.
-const TIME_BUDGET_MS = 220_000;
+// Hard stop at 240s — always respond before Vercel's 300s kill.
+const TIME_BUDGET_MS = 240_000;
 
-const CONCURRENCY = 5;
-const MAX_PER_RUN = 400;
+// CONCURRENCY=1 (sequential): thundering herd was exhausting the OpusClip
+// rate limit on every invocation. One request at a time + jittered retry = stable.
+// At ~1.5s/clip sequential = ~160 clips/240s per call.
+const CONCURRENCY = 1;
+const MAX_PER_RUN = 500;
 
 export async function GET(req: NextRequest) {
   // Verify this is called by Vercel cron or with the cron secret
