@@ -102,9 +102,11 @@ export async function GET(req: NextRequest) {
 
     let next = 0;
     let budgetExceeded = false;
+    let dailyLimitHit = false;
+
     async function worker() {
       while (true) {
-        // Stop accepting new work if we're within 80s of the time budget
+        if (dailyLimitHit) return;
         if (Date.now() - startedAt > TIME_BUDGET_MS) {
           budgetExceeded = true;
           return;
@@ -125,26 +127,33 @@ export async function GET(req: NextRequest) {
           });
           scheduled++;
         } catch (err) {
-          failed++;
-          if (errors.length < 10) {
-            errors.push(`${item.title.slice(0, 40)} → ${err instanceof Error ? err.message : String(err)}`);
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes("[429:DAY]")) {
+            dailyLimitHit = true;
+            return;
           }
+          failed++;
+          if (errors.length < 10) errors.push(`${item.title.slice(0, 40)} → ${msg}`);
         }
       }
     }
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, toProcess.length) }, () => worker()));
 
-    // If budget was exceeded, count unprocessed items as still remaining
-    const unprocessed = budgetExceeded ? toProcess.length - (scheduled + failed) : 0;
-    const totalRemaining = remaining + unprocessed;
+    // Count unprocessed items as remaining
+    const processed = scheduled + failed;
+    const unprocessed = toProcess.length - processed;
+    const totalRemaining = remaining + (budgetExceeded || dailyLimitHit ? unprocessed : 0);
 
     return NextResponse.json({
-      message: `Scheduled ${scheduled} clips${totalRemaining > 0 ? `, ${totalRemaining} remaining for next run` : " — all done!"}`,
+      message: dailyLimitHit
+        ? `Daily limit reached after ${scheduled} scheduled. ${totalRemaining} remaining — resets midnight UTC.`
+        : `Scheduled ${scheduled} clips${totalRemaining > 0 ? `, ${totalRemaining} remaining for next run` : " — all done!"}`,
       scheduled,
       failed,
-      remaining: totalRemaining,
+      remaining: dailyLimitHit ? -1 : totalRemaining, // -1 = daily limit: stop retrying today
       totalUnscheduled,
       budgetExceeded,
+      dailyLimitHit,
       durationMs: Date.now() - startedAt,
       errors,
     });

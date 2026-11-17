@@ -2,7 +2,7 @@ name: Auto-Schedule Clips
 
 on:
   schedule:
-    - cron: "0 * * * *"    # trigger every hour as a watchdog
+    - cron: "5 0 * * *"    # daily at 00:05 UTC — 5 min after midnight quota reset
   workflow_dispatch:        # manual trigger from GitHub Actions UI
 
 jobs:
@@ -59,6 +59,13 @@ jobs:
             if [ "$remaining" = "0" ]; then
               echo ""
               echo "✅ All clips scheduled! Nothing left to do."
+              break
+            fi
+
+            # -1 = daily limit hit — stop for today, tomorrow's cron will continue
+            if [ "$remaining" = "-1" ]; then
+              echo ""
+              echo "📅 Daily limit reached. Stopping — will resume at midnight UTC."
               break
             fi
 

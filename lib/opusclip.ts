@@ -148,17 +148,22 @@ export async function scheduleClip(params: {
   });
   const data = await res.json();
   if (!res.ok) {
-    if (res.status === 429 && retries > 0) {
-      // retryAfter is nested under data.error and is in SECONDS (not ms).
-      // Each call while blocked extends the penalty window, so respect the value.
-      const retryAfterSec = data.error?.retryAfter ?? data.retryAfter;
-      const baseMs = typeof retryAfterSec === "number" ? retryAfterSec * 1000 : 2000;
-      // Cap at 30s so a single retry doesn't blow the Vercel time budget.
-      // Add jitter to de-sync concurrent callers.
-      const jitter = Math.floor(Math.random() * 1000);
-      const waitMs = Math.min(baseMs + jitter, 30_000);
-      await new Promise((r) => setTimeout(r, waitMs));
-      return scheduleClip(params, retries - 1);
+    if (res.status === 429) {
+      // Daily limit: no point retrying — quota resets at midnight UTC.
+      // Throw a special error so the caller can stop immediately.
+      const window = data.error?.window ?? data.window;
+      if (window === "DAY") {
+        throw new Error("[429:DAY] Daily publish limit reached (500/day). Resets at midnight UTC.");
+      }
+      // Per-request token bucket — retryAfter is in SECONDS (nested under data.error).
+      if (retries > 0) {
+        const retryAfterSec = data.error?.retryAfter ?? data.retryAfter;
+        const baseMs = typeof retryAfterSec === "number" ? retryAfterSec * 1000 : 2000;
+        const jitter = Math.floor(Math.random() * 1000);
+        const waitMs = Math.min(baseMs + jitter, 30_000);
+        await new Promise((r) => setTimeout(r, waitMs));
+        return scheduleClip(params, retries - 1);
+      }
     }
     const raw = data.errorMessage ?? data.message ?? data.error ?? data;
     // Prefer a plain string message; for objects extract .message; last resort JSON
