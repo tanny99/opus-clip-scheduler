@@ -5,9 +5,10 @@ import { generateScheduleSlots } from "@/lib/scheduler";
 
 export const maxDuration = 300;
 
-const BATCH_SIZE = 1;         // sequential — no parallel pressure on rate limits
-const BATCH_DELAY_MS = 2500;  // 2.5s between clips = ~24/min
-const MAX_PER_RUN = 100;      // ~250s per run (100 × 2.5s) safely within 300s limit
+// 5 concurrent workers with jittered backoff on 429 (same as schedule route).
+// At ~1.5s average per clip with 5 workers = ~3.3 clips/sec → ~800 clips/250s.
+const CONCURRENCY = 5;
+const MAX_PER_RUN = 800; // process up to 800 clips per invocation (fits in 250s)
 
 export async function GET(req: NextRequest) {
   // Verify this is called by Vercel cron or with the cron secret
@@ -86,7 +87,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Schedule up to MAX_PER_RUN clips
+    // Schedule up to MAX_PER_RUN clips using concurrent workers
     const toProcess = toSchedule.slice(0, MAX_PER_RUN);
     const remaining = toSchedule.length - toProcess.length;
     const slots = generateScheduleSlots(toProcess.length, new Date());
@@ -95,39 +96,33 @@ export async function GET(req: NextRequest) {
     let failed = 0;
     const errors: string[] = [];
 
-    for (let i = 0; i < toProcess.length; i += BATCH_SIZE) {
-      const batch = toProcess.slice(i, i + BATCH_SIZE);
-      const results = await Promise.allSettled(
-        batch.map((item, j) =>
-          scheduleClip({
+    let next = 0;
+    async function worker() {
+      while (true) {
+        const idx = next++;
+        if (idx >= toProcess.length) return;
+        const item = toProcess[idx];
+        try {
+          await scheduleClip({
             projectId: item.projectId,
             clipId: item.clipId,
             postAccountId: item.postAccountId,
             subAccountId: item.subAccountId,
-            publishAt: slots[i + j].toISOString(),
+            publishAt: slots[idx].toISOString(),
             title: item.title,
             description: item.description,
             privacy: "public",
-          })
-        )
-      );
-
-      for (let j = 0; j < results.length; j++) {
-        const r = results[j];
-        if (r.status === "fulfilled") {
+          });
           scheduled++;
-        } else {
+        } catch (err) {
           failed++;
           if (errors.length < 10) {
-            errors.push(`${batch[j].title.slice(0, 40)} → ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
+            errors.push(`${item.title.slice(0, 40)} → ${err instanceof Error ? err.message : String(err)}`);
           }
         }
       }
-
-      if (i + BATCH_SIZE < toProcess.length) {
-        await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
-      }
     }
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, toProcess.length) }, () => worker()));
 
     return NextResponse.json({
       message: `Scheduled ${scheduled} clips${remaining > 0 ? `, ${remaining} remaining for next run` : " — all done!"}`,
