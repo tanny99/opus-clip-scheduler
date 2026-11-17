@@ -130,6 +130,17 @@ export default function Dashboard() {
   const logRef = useRef<HTMLDivElement>(null);
   const consoleRef = useRef<HTMLDivElement>(null);
 
+  type BotStatus = {
+    running: boolean;
+    status: string;
+    conclusion: string | null;
+    startedAt: string | null;
+    updatedAt: string | null;
+    runUrl: string | null;
+    fetchedAt: number;
+  };
+  const [botStatus, setBotStatus] = useState<BotStatus | null>(null);
+
   const pushConsole = useCallback((kind: ConsoleEntry["kind"], msg: string) => {
     setConsoleLog((prev) => [{ kind, msg, ts: Date.now() }, ...prev].slice(0, 500));
   }, []);
@@ -208,18 +219,39 @@ export default function Dashboard() {
     }
   }, []);
 
+  const fetchBotStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/github-status");
+      if (!res.ok) return;
+      const data = await res.json();
+      setBotStatus({ ...data, fetchedAt: Date.now() });
+    } catch {
+      // silent — bot status is non-critical
+    }
+  }, []);
+
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
     setError(null);
-    await Promise.all([fetchProjects(), fetchAccounts(), fetchStats()]);
+    await Promise.all([fetchProjects(), fetchAccounts(), fetchStats(), fetchBotStatus()]);
     setRefreshing(false);
-  }, [fetchProjects, fetchAccounts, fetchStats]);
+  }, [fetchProjects, fetchAccounts, fetchStats, fetchBotStatus]);
 
   useEffect(() => {
     fetchProjects();
     fetchAccounts();
     fetchStats();
-  }, [fetchProjects, fetchAccounts, fetchStats]);
+    fetchBotStatus();
+  }, [fetchProjects, fetchAccounts, fetchStats, fetchBotStatus]);
+
+  // Auto-refresh stats + bot status every 30s so any device stays current
+  useEffect(() => {
+    const id = setInterval(() => {
+      fetchStats();
+      fetchBotStatus();
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [fetchStats, fetchBotStatus]);
 
   const loadClips = useCallback(async (projectId: string) => {
     setProjects((prev) =>
@@ -504,6 +536,42 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+
+        {/* Bot status bar */}
+        {botStatus && (
+          <div className={`border-b border-gray-800/60 ${botStatus.running ? "bg-purple-950/40" : "bg-gray-900/60"}`}>
+            <div className="max-w-6xl mx-auto px-4 py-1.5 flex items-center gap-3 text-xs flex-wrap">
+              <span className={`flex items-center gap-1.5 font-medium ${botStatus.running ? "text-purple-300" : "text-gray-500"}`}>
+                <span className={`w-2 h-2 rounded-full ${botStatus.running ? "bg-purple-400 animate-pulse" : "bg-gray-600"}`} />
+                {botStatus.running ? "Bot Running" : "Bot Idle"}
+              </span>
+              {botStatus.running && botStatus.startedAt && (
+                <span className="text-gray-400">
+                  Started {minsAgo(new Date(botStatus.startedAt).getTime())}
+                </span>
+              )}
+              {!botStatus.running && botStatus.updatedAt && (
+                <span className="text-gray-600">
+                  Last run: {minsAgo(new Date(botStatus.updatedAt).getTime())}
+                  {botStatus.conclusion && ` · ${botStatus.conclusion}`}
+                </span>
+              )}
+              {botStatus.runUrl && (
+                <a
+                  href={botStatus.runUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-gray-500 hover:text-gray-300 underline"
+                >
+                  View run →
+                </a>
+              )}
+              <span className="text-gray-700 ml-auto">
+                bot status checked {minsAgo(botStatus.fetchedAt)}
+              </span>
+            </div>
+          </div>
+        )}
 
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -896,8 +964,8 @@ export default function Dashboard() {
           sidebarOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        {/* Spacer for sticky header (API bar ~32px + header ~72px) */}
-        <div className="h-[104px] flex-shrink-0" />
+        {/* Spacer for sticky header (API bar ~32px + bot bar ~32px + header ~72px) */}
+        <div className={`flex-shrink-0 ${botStatus ? "h-[136px]" : "h-[104px]"}`} />
         {/* Console header */}
         <div className="px-3 py-2 border-b border-t border-gray-800 bg-gray-900 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-2">
