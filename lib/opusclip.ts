@@ -149,10 +149,12 @@ export async function scheduleClip(params: {
   const data = await res.json();
   if (!res.ok) {
     if (res.status === 429 && retries > 0) {
-      // Exponential backoff: each retry waits progressively longer
-      const base = typeof data.retryAfter === "number" ? data.retryAfter : 1500;
-      const attempt = 6 - retries; // 1st retry = attempt 1, 2nd = 2, ...
-      const waitMs = base * attempt + 500;
+      const base = typeof data.retryAfter === "number" ? data.retryAfter : 1200;
+      const attempt = 6 - retries; // 1st retry = 1, 2nd = 2, ...
+      // Jitter (0–600ms random) prevents concurrent workers from thundering-herding
+      // on the same retry window and depleting the token bucket again
+      const jitter = Math.floor(Math.random() * 600);
+      const waitMs = base * attempt + 300 + jitter;
       await new Promise((r) => setTimeout(r, waitMs));
       return scheduleClip(params, retries - 1);
     }

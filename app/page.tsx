@@ -260,7 +260,7 @@ export default function Dashboard() {
     );
   };
 
-  const CHUNK_SIZE = 20; // server now fires 10 schedules in parallel per chunk → a chunk clears in ~2s
+  const CHUNK_SIZE = 10; // 5 concurrent workers × ~2s avg per item = ~4s per chunk
 
   // Execute a list of items in chunks. Respects pauseRef / haltRef between chunks.
   const executeItems = async (
@@ -441,6 +441,8 @@ export default function Dashboard() {
       }
 
       pushConsole("info", `${items.length} items to schedule across ${accountIds.length} accounts`);
+      const estMins = Math.ceil(items.length / 5 * 1.5 / 60); // ~1.5s per item at 5 concurrency
+      pushConsole("info", `Est. time: ~${estMins} min at 5 concurrent (OpusClip rate limit)`);
       setProgress({ total: items.length, scheduled: 0, failed: 0, done: false, errors: [] });
       await executeItems(items, 0, 0, items.length, []);
     } catch (err) {
