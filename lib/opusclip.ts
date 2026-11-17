@@ -125,7 +125,7 @@ export async function scheduleClip(params: {
   title: string;
   description?: string;
   privacy?: string;
-}, retries = 5): Promise<{ scheduleId: string; postId: string; publishAt: string }> {
+}, retries = 3): Promise<{ scheduleId: string; postId: string; publishAt: string }> {
   const body: Record<string, unknown> = {
     projectId: params.projectId,
     clipId: params.clipId,
@@ -149,11 +149,14 @@ export async function scheduleClip(params: {
   const data = await res.json();
   if (!res.ok) {
     if (res.status === 429 && retries > 0) {
-      const base = typeof data.retryAfter === "number" ? data.retryAfter : 1200;
-      const attempt = 6 - retries; // 1st retry = 1, 2nd = 2, ...
-      // Jitter (0–600ms random) prevents thundering herd.
-      const jitter = Math.floor(Math.random() * 600);
-      const waitMs = base * attempt + 300 + jitter;
+      // retryAfter is nested under data.error and is in SECONDS (not ms).
+      // Each call while blocked extends the penalty window, so respect the value.
+      const retryAfterSec = data.error?.retryAfter ?? data.retryAfter;
+      const baseMs = typeof retryAfterSec === "number" ? retryAfterSec * 1000 : 2000;
+      // Cap at 30s so a single retry doesn't blow the Vercel time budget.
+      // Add jitter to de-sync concurrent callers.
+      const jitter = Math.floor(Math.random() * 1000);
+      const waitMs = Math.min(baseMs + jitter, 30_000);
       await new Promise((r) => setTimeout(r, waitMs));
       return scheduleClip(params, retries - 1);
     }

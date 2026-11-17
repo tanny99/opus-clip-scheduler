@@ -13,8 +13,8 @@ jobs:
     steps:
       - name: Schedule all unposted clips (loop until done)
         run: |
-          MAX_RUNS=50          # safety cap: 50 × ~5min = ~4h max
-          WAIT_SECS=30         # wait 30s between runs (let token bucket refill)
+          MAX_RUNS=50          # safety cap: 50 × ~6min = ~5h max
+          WAIT_SECS=300        # wait 5min between runs — lets OpusClip rate limit reset
           ITERATION=0
 
           while [ $ITERATION -lt $MAX_RUNS ]; do
