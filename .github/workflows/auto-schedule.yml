@@ -32,7 +32,10 @@ jobs:
             echo "HTTP $http_code"
             echo "$body"
 
-            if [ "$http_code" -ge 300 ]; then
+            # 504 = Vercel timeout; endpoint may have done partial work — just retry
+            if [ "$http_code" = "504" ]; then
+              echo "⏱ Vercel timeout (504) — will retry after wait"
+            elif [ "$http_code" -ge 300 ]; then
               echo "⚠ Error response (HTTP $http_code) — stopping."
               exit 1
             fi

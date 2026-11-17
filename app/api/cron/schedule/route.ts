@@ -8,7 +8,7 @@ export const maxDuration = 300;
 // 5 concurrent workers with jittered backoff on 429 (same as schedule route).
 // At ~1.5s average per clip with 5 workers = ~3.3 clips/sec → ~800 clips/250s.
 const CONCURRENCY = 5;
-const MAX_PER_RUN = 800; // process up to 800 clips per invocation (fits in 250s)
+const MAX_PER_RUN = 400; // 400 clips × ~1.5s avg / 5 workers = ~120s — well within 300s limit
 
 export async function GET(req: NextRequest) {
   // Verify this is called by Vercel cron or with the cron secret
