@@ -148,6 +148,7 @@ export default function Dashboard() {
     fetchedAt: number;
   };
   const [quota, setQuota] = useState<QuotaStatus | null>(null);
+  const [countdown, setCountdown] = useState<string>("");
 
   const pushConsole = useCallback((kind: ConsoleEntry["kind"], msg: string) => {
     setConsoleLog((prev) => [{ kind, msg, ts: Date.now() }, ...prev].slice(0, 500));
@@ -273,6 +274,25 @@ export default function Dashboard() {
     }, 30_000);
     return () => clearInterval(id);
   }, [fetchStats, fetchBotStatus, fetchQuota]);
+
+  // Countdown to next midnight UTC — ticks every second
+  useEffect(() => {
+    function tick() {
+      const now = new Date();
+      const midnight = new Date();
+      midnight.setUTCHours(24, 0, 0, 0);
+      const diff = midnight.getTime() - now.getTime();
+      const h = Math.floor(diff / 3_600_000);
+      const m = Math.floor((diff % 3_600_000) / 60_000);
+      const s = Math.floor((diff % 60_000) / 1_000);
+      setCountdown(
+        `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+      );
+    }
+    tick();
+    const id = setInterval(tick, 1_000);
+    return () => clearInterval(id);
+  }, []);
 
   const loadClips = useCallback(async (projectId: string) => {
     setProjects((prev) =>
@@ -594,12 +614,18 @@ export default function Dashboard() {
               {quota && (
                 <>
                   <span className={`flex items-center gap-1.5 font-medium ${quota.exhausted ? "text-red-400" : "text-green-400"}`}>
-                    <span className={`w-2 h-2 rounded-full ${quota.exhausted ? "bg-red-500" : "bg-green-500"}`} />
-                    OpusClip Quota: {quota.exhausted ? "Exhausted" : "Available"} (500/day)
+                    <span className={`w-2 h-2 rounded-full ${quota.exhausted ? "bg-red-500 animate-pulse" : "bg-green-500"}`} />
+                    Quota: {quota.exhausted ? "Exhausted" : "Available"} · 500/day
                   </span>
-                  {quota.exhausted && quota.resetsAt && (
-                    <span className="text-red-300/70">
-                      Resets {new Date(quota.resetsAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}
+                  {quota.exhausted ? (
+                    <span className="flex items-center gap-1.5 text-red-300 font-mono font-semibold bg-red-900/30 border border-red-700/40 px-2 py-0.5 rounded">
+                      <span className="text-red-400/70 font-sans font-normal">Resets in</span>
+                      {countdown}
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-gray-500 font-mono bg-gray-800/60 border border-gray-700/40 px-2 py-0.5 rounded">
+                      <span className="text-gray-600 font-sans font-normal">Next reset in</span>
+                      {countdown}
                     </span>
                   )}
                 </>
