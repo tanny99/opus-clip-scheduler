@@ -5,10 +5,12 @@ import { generateScheduleSlots } from "@/lib/scheduler";
 
 export const maxDuration = 300;
 
-// 5 concurrent workers with jittered backoff on 429 (same as schedule route).
-// At ~1.5s average per clip with 5 workers = ~3.3 clips/sec → ~800 clips/250s.
+// Hard stop at 220s — always respond before Vercel's 300s kill.
+// Workers check this after each clip so the endpoint never returns 504.
+const TIME_BUDGET_MS = 220_000;
+
 const CONCURRENCY = 5;
-const MAX_PER_RUN = 400; // 400 clips × ~1.5s avg / 5 workers = ~120s — well within 300s limit
+const MAX_PER_RUN = 400;
 
 export async function GET(req: NextRequest) {
   // Verify this is called by Vercel cron or with the cron secret
@@ -97,8 +99,14 @@ export async function GET(req: NextRequest) {
     const errors: string[] = [];
 
     let next = 0;
+    let budgetExceeded = false;
     async function worker() {
       while (true) {
+        // Stop accepting new work if we're within 80s of the time budget
+        if (Date.now() - startedAt > TIME_BUDGET_MS) {
+          budgetExceeded = true;
+          return;
+        }
         const idx = next++;
         if (idx >= toProcess.length) return;
         const item = toProcess[idx];
@@ -124,12 +132,17 @@ export async function GET(req: NextRequest) {
     }
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, toProcess.length) }, () => worker()));
 
+    // If budget was exceeded, count unprocessed items as still remaining
+    const unprocessed = budgetExceeded ? toProcess.length - (scheduled + failed) : 0;
+    const totalRemaining = remaining + unprocessed;
+
     return NextResponse.json({
-      message: `Scheduled ${scheduled} clips${remaining > 0 ? `, ${remaining} remaining for next run` : " — all done!"}`,
+      message: `Scheduled ${scheduled} clips${totalRemaining > 0 ? `, ${totalRemaining} remaining for next run` : " — all done!"}`,
       scheduled,
       failed,
-      remaining,
+      remaining: totalRemaining,
       totalUnscheduled,
+      budgetExceeded,
       durationMs: Date.now() - startedAt,
       errors,
     });
