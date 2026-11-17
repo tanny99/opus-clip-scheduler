@@ -1,5 +1,6 @@
 // Connected social accounts (fetched from OpusClip MCP, stored here since
 // the REST API does not expose a /post-accounts endpoint)
+// Last synced: 2026-11-15
 import { SocialAccount } from "./opusclip";
 
 export const SOCIAL_ACCOUNTS: SocialAccount[] = [
@@ -16,6 +17,12 @@ export const SOCIAL_ACCOUNTS: SocialAccount[] = [
     profileUrl: "https://www.youtube.com/channel/UCu5863Gv0RE0kjMDEc_gyFw",
   },
   {
+    postAccountId: "6af9a601d355c54f33f36311",
+    platform: "YOUTUBE",
+    name: "rody god",
+    profileUrl: "https://www.youtube.com/channel/UCtD-uedCPomV6NnZSVNXEvw",
+  },
+  {
     postAccountId: "6af762758b1c1f1acd377f17",
     platform: "YOUTUBE",
     name: "tanishk gupta",
@@ -24,7 +31,7 @@ export const SOCIAL_ACCOUNTS: SocialAccount[] = [
   {
     postAccountId: "6af766b36a152f885ced4bfe",
     platform: "INSTAGRAM_BUSINESS",
-    name: "Mahika",
+    name: "Mahika🦋",
     profileUrl: "https://www.instagram.com/kyayaarmahiii",
     subAccountId: "17841409609334239",
   },
