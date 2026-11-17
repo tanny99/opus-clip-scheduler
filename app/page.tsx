@@ -124,8 +124,15 @@ export default function Dashboard() {
   const [cacheAgeMs, setCacheAgeMs] = useState<number | null>(null);
   const [rateLimitHits, setRateLimitHits] = useState(0);
   type LogEntry = ItemResult & { accountName: string; ts: number };
+  type ConsoleEntry = { kind: "info" | "warn" | "ok" | "error"; msg: string; ts: number };
   const [liveLog, setLiveLog] = useState<LogEntry[]>([]);
+  const [consoleLog, setConsoleLog] = useState<ConsoleEntry[]>([]);
   const logRef = useRef<HTMLDivElement>(null);
+  const consoleRef = useRef<HTMLDivElement>(null);
+
+  const pushConsole = useCallback((kind: ConsoleEntry["kind"], msg: string) => {
+    setConsoleLog((prev) => [{ kind, msg, ts: Date.now() }, ...prev].slice(0, 500));
+  }, []);
   const [refreshing, setRefreshing] = useState(false);
   type ApiStatus = {
     fetchOk: boolean | null;
@@ -303,7 +310,9 @@ export default function Dashboard() {
         } catch (err) {
           if (err instanceof TypeError && attempt < 3) {
             attempt++;
-            setScheduleStatus(`Network error — retrying (${attempt}/3)...`);
+            const msg = `Network error — retrying (${attempt}/3)...`;
+            setScheduleStatus(msg);
+            pushConsole("warn", msg);
             await new Promise((r) => setTimeout(r, attempt * 3000));
             continue;
           }
@@ -317,9 +326,12 @@ export default function Dashboard() {
       if (!data) continue;
       scheduled += data.scheduled;
       failed += data.failed;
-      if (data.rateLimitHits) setRateLimitHits((prev) => prev + data!.rateLimitHits!);
+      if (data.rateLimitHits) {
+        setRateLimitHits((prev) => prev + data!.rateLimitHits!);
+        pushConsole("warn", `Rate limited ${data.rateLimitHits}× — auto-retried with backoff`);
+      }
       lastErrors = data.errors?.length ? data.errors : lastErrors;
-      // Append per-item results to live log (newest at top)
+      // Append per-item results to live log + console
       if (data.results?.length) {
         const entries: LogEntry[] = data.results.map((r: ItemResult) => ({
           ...r,
@@ -327,6 +339,14 @@ export default function Dashboard() {
           ts: Date.now(),
         }));
         setLiveLog((prev) => [...entries.reverse(), ...prev]);
+        for (const r of data.results) {
+          const acc = accounts.find((a) => a.postAccountId === r.postAccountId)?.name ?? r.postAccountId;
+          if (r.status === "ok") {
+            pushConsole("ok", `✓ [${acc}] ${r.title}`);
+          } else {
+            pushConsole("error", `✗ [${acc}] ${r.title} — ${r.error ?? "failed"}`);
+          }
+        }
       }
       setScheduleStatus("");
       setProgress({ total, scheduled, failed, done: false, errors: lastErrors });
@@ -374,6 +394,8 @@ export default function Dashboard() {
     setPendingItems([]);
     setRateLimitHits(0);
     setLiveLog([]);
+    setConsoleLog([]);
+    pushConsole("info", "── Schedule run started ──");
     pauseRef.current = false;
     haltRef.current = false;
 
@@ -385,10 +407,12 @@ export default function Dashboard() {
       if (cached) {
         setCacheAgeMs(cached.ageMs);
         setScheduleStatus("Loading from cache...");
+        pushConsole("info", `Loading ${cached.pairs.length} items from cache (${Math.round(cached.ageMs / 60000)}m old)`);
         prepBody = { cachedPairs: cached.pairs };
       } else {
         setCacheAgeMs(null);
         setScheduleStatus("Fetching clips from OpusClip...");
+        pushConsole("info", "Fetching unscheduled clips from OpusClip...");
         prepBody = { selectedAccounts: accountIds, failedOnly };
       }
 
@@ -410,11 +434,13 @@ export default function Dashboard() {
       setScheduleStatus("");
 
       if (items.length === 0) {
+        pushConsole("info", "Nothing to schedule — all clips already scheduled.");
         setProgress({ total: 0, scheduled: 0, failed: 0, done: true, errors: [] });
         setScheduling(false);
         return;
       }
 
+      pushConsole("info", `${items.length} items to schedule across ${accountIds.length} accounts`);
       setProgress({ total: items.length, scheduled: 0, failed: 0, done: false, errors: [] });
       await executeItems(items, 0, 0, items.length, []);
     } catch (err) {
@@ -426,6 +452,8 @@ export default function Dashboard() {
       setScheduleStatus("");
     }
   };
+
+  const sidebarOpen = consoleLog.length > 0;
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
@@ -852,12 +880,56 @@ export default function Dashboard() {
         )}
       </div>
 
-      <div className="fixed bottom-3 right-4 text-xs text-gray-600">
+      <div className={`fixed bottom-3 text-xs text-gray-600 transition-all ${sidebarOpen ? "right-[292px]" : "right-4"}`}>
         Last updated:{" "}
         {new Date(process.env.NEXT_PUBLIC_BUILD_TIME!).toLocaleString("en-US", {
           month: "short", day: "numeric", year: "numeric",
           hour: "2-digit", minute: "2-digit", timeZoneName: "short",
         })}
+      </div>
+
+      {/* ── Right-side console panel ── */}
+      <div
+        className={`fixed right-0 top-0 bottom-0 w-72 bg-gray-950 border-l border-gray-700/60 flex flex-col z-[8] transition-transform duration-300 ${
+          sidebarOpen ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        {/* Spacer for sticky header (API bar ~32px + header ~72px) */}
+        <div className="h-[104px] flex-shrink-0" />
+        {/* Console header */}
+        <div className="px-3 py-2 border-b border-t border-gray-800 bg-gray-900 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-white">Console</span>
+            {scheduling && <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">{consoleLog.length} lines</span>
+            <button
+              onClick={() => setConsoleLog([])}
+              className="text-xs text-gray-600 hover:text-gray-400 cursor-pointer"
+              title="Clear console"
+            >✕</button>
+          </div>
+        </div>
+        {/* Console entries */}
+        <div ref={consoleRef} className="flex-1 overflow-y-auto p-2 space-y-px font-mono text-[11px] bg-gray-950">
+          {consoleLog.map((entry, i) => (
+            <div
+              key={i}
+              className={`px-1.5 py-0.5 rounded leading-relaxed ${
+                entry.kind === "ok" ? "text-green-400"
+                : entry.kind === "error" ? "text-red-400"
+                : entry.kind === "warn" ? "text-orange-400"
+                : "text-gray-500"
+              }`}
+            >
+              <span className="text-gray-700 mr-1.5 select-none">
+                {new Date(entry.ts).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+              </span>
+              {entry.msg}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

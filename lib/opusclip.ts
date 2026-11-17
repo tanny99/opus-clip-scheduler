@@ -157,7 +157,12 @@ export async function scheduleClip(params: {
       return scheduleClip(params, retries - 1);
     }
     const raw = data.errorMessage ?? data.message ?? data.error ?? data;
-    const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
+    // Prefer a plain string message; for objects extract .message; last resort JSON
+    const detail = typeof raw === "string"
+      ? raw
+      : typeof raw?.message === "string"
+      ? raw.message
+      : JSON.stringify(raw);
     throw new Error(`[${res.status}] ${detail}`);
   }
   return data.data;

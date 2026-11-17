@@ -5,10 +5,10 @@ import { generateScheduleSlots } from "@/lib/scheduler";
 
 export const maxDuration = 300;
 
-// Fire up to CONCURRENCY schedule requests in parallel. scheduleClip() handles
-// 429s with its own exponential-backoff retry, so we can push wide and let it
-// self-regulate instead of serializing everything with an artificial delay.
-const CONCURRENCY = 10;
+// Sequential scheduling with a hard floor between requests.
+// OpusClip's rate limit is a token bucket that exhausts almost instantly with
+// any parallelism. Sequential + 900ms gap = ~1 req/sec, stays well under it.
+const MIN_DELAY_MS = 900;
 
 export interface ScheduleItem {
   projectId: string;
@@ -115,9 +115,9 @@ export type ItemResult = {
 };
 
 // ── EXECUTE ───────────────────────────────────────────────────────────────────
-// Receives a chunk of pre-prepared items and schedules them.
-// Runs CONCURRENCY workers in parallel against the OpusClip API; rate limits
-// are absorbed by scheduleClip()'s internal retry/backoff loop.
+// Receives a chunk of pre-prepared items and schedules them one at a time.
+// A hard MIN_DELAY_MS floor between requests keeps us under OpusClip's token
+// bucket rate limit. scheduleClip() handles any 429s with its own backoff.
 async function handleExecute(body: { items: ScheduleItem[] }) {
   const items = body.items || [];
   if (items.length === 0) return NextResponse.json({ scheduled: 0, failed: 0, errors: [], results: [], rateLimitHits: 0 });
@@ -125,39 +125,36 @@ async function handleExecute(body: { items: ScheduleItem[] }) {
   let scheduled = 0;
   let failed = 0;
   const errors: string[] = [];
-  const itemResults: ItemResult[] = new Array(items.length);
+  const itemResults: ItemResult[] = [];
 
-  let next = 0;
-  async function worker() {
-    while (true) {
-      const idx = next++;
-      if (idx >= items.length) return;
-      const item = items[idx];
-      try {
-        await scheduleClip({
-          projectId: item.projectId,
-          clipId: item.clipId,
-          postAccountId: item.postAccountId,
-          subAccountId: item.subAccountId,
-          publishAt: item.publishAt,
-          title: item.title,
-          description: item.description,
-          privacy: "public",
-        });
-        scheduled++;
-        itemResults[idx] = { title: item.title, postAccountId: item.postAccountId, status: "ok" };
-      } catch (err) {
-        failed++;
-        const errMsg = err instanceof Error ? err.message : String(err);
-        const logMsg = `${item.title.slice(0, 40)} → ${errMsg}`;
-        if (errors.length < 20) errors.push(logMsg);
-        itemResults[idx] = { title: item.title, postAccountId: item.postAccountId, status: "failed", error: errMsg };
-      }
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const t0 = Date.now();
+    try {
+      await scheduleClip({
+        projectId: item.projectId,
+        clipId: item.clipId,
+        postAccountId: item.postAccountId,
+        subAccountId: item.subAccountId,
+        publishAt: item.publishAt,
+        title: item.title,
+        description: item.description,
+        privacy: "public",
+      });
+      scheduled++;
+      itemResults.push({ title: item.title, postAccountId: item.postAccountId, status: "ok" });
+    } catch (err) {
+      failed++;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errors.length < 20) errors.push(`${item.title.slice(0, 40)} → ${errMsg}`);
+      itemResults.push({ title: item.title, postAccountId: item.postAccountId, status: "failed", error: errMsg });
+    }
+    // Enforce minimum gap between requests (scheduleClip's retry time counts too)
+    const elapsed = Date.now() - t0;
+    if (i < items.length - 1 && elapsed < MIN_DELAY_MS) {
+      await new Promise((r) => setTimeout(r, MIN_DELAY_MS - elapsed));
     }
   }
-
-  const workerCount = Math.min(CONCURRENCY, items.length);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   const rateLimitHits = errors.filter((e) => e.includes("[429]")).length;
   return NextResponse.json({ scheduled, failed, errors, rateLimitHits, results: itemResults });
